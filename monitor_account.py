@@ -7,6 +7,11 @@ from datetime import datetime
 from dotenv import load_dotenv
 from telethon import TelegramClient, events
 from telethon.tl.functions.messages import SendMessageRequest
+import colorama
+from colorama import Fore, Back, Style
+
+# Initialize colorama
+colorama.init()
 
 # Load environment variables
 load_dotenv()
@@ -14,12 +19,12 @@ load_dotenv()
 # Configure logging with colors
 class ColoredFormatter(logging.Formatter):
     """Custom formatter with colors"""
-    grey = "\x1b[38;21m"
-    blue = "\x1b[38;5;39m"
-    yellow = "\x1b[38;5;226m"
-    red = "\x1b[38;5;196m"
-    bold_red = "\x1b[31;1m"
-    reset = "\x1b[0m"
+    grey = Fore.WHITE
+    blue = Fore.CYAN
+    yellow = Fore.YELLOW
+    red = Fore.RED
+    bold_red = Fore.RED + Style.BRIGHT
+    reset = Style.RESET_ALL
 
     def __init__(self, fmt):
         super().__init__()
@@ -45,46 +50,63 @@ ch.setLevel(logging.INFO)
 ch.setFormatter(ColoredFormatter('%(asctime)s - %(levelname)s - %(message)s'))
 logger.addHandler(ch)
 
-def get_target_channels():
-    """Get list of target channels from environment variable."""
-    channels = os.getenv('TARGET_CHANNELS', '').split(',')
-    return [channel.strip() for channel in channels if channel.strip()]
+def clear_screen():
+    """Clear the console screen."""
+    os.system('cls' if os.name == 'nt' else 'clear')
 
 def print_banner():
     """Print a fancy banner"""
+    clear_screen()
     channels = get_target_channels()
     channels_text = "\n    ║  ".join([f"Monitoring: {channel}" for channel in channels])
     
     banner = f"""
-    ╔══════════════════════════════════════════╗
-    ║      Telegram Contract Monitor Bot       ║
+    {Fore.CYAN}╔══════════════════════════════════════════╗
+    ║      {Fore.GREEN}Telegram Contract Monitor{Fore.CYAN}       ║
     ║                                          ║
     ║  {channels_text}
     ║  Forwarding to: @{os.getenv('AUTOBUY_BOT_USERNAME')}
-    ╚══════════════════════════════════════════╝
+    ╚══════════════════════════════════════════╝{Style.RESET_ALL}
     """
     print(banner)
 
 def print_menu():
     """Print the main menu"""
-    menu = """
-    📋 Available Commands:
-    ---------------------
-    1. /start - Check if bot is running
-    2. /status - Show current status
-    3. /help - Show this menu
-    4. Ctrl+C - Stop the bot
+    menu = f"""
+    {Fore.YELLOW}📋 Available Commands:{Style.RESET_ALL}
+    {Fore.CYAN}---------------------
+    {Fore.GREEN}1. /start{Style.RESET_ALL} - Check if bot is running
+    {Fore.GREEN}2. /status{Style.RESET_ALL} - Show current status
+    {Fore.GREEN}3. /help{Style.RESET_ALL} - Show this menu
+    {Fore.GREEN}4. Ctrl+C{Style.RESET_ALL} - Stop the bot
 
-    💡 Tips:
-    - The bot will automatically forward any contract addresses it finds
+    {Fore.YELLOW}💡 Tips:{Style.RESET_ALL}
+    {Fore.CYAN}- The bot will automatically forward any contract addresses it finds
     - You'll see real-time updates in this window
-    - Check the logs above for activity
+    - Check the logs above for activity{Style.RESET_ALL}
     """
     print(menu)
 
+def print_status(message, status_type="info"):
+    """Print a status message with color"""
+    timestamp = datetime.now().strftime("%H:%M:%S")
+    if status_type == "info":
+        print(f"{Fore.CYAN}[{timestamp}] ℹ️ {message}{Style.RESET_ALL}")
+    elif status_type == "success":
+        print(f"{Fore.GREEN}[{timestamp}] ✅ {message}{Style.RESET_ALL}")
+    elif status_type == "error":
+        print(f"{Fore.RED}[{timestamp}] ❌ {message}{Style.RESET_ALL}")
+    elif status_type == "warning":
+        print(f"{Fore.YELLOW}[{timestamp}] ⚠️ {message}{Style.RESET_ALL}")
+
+def get_target_channels():
+    """Get list of target channels from environment variable."""
+    channels = os.getenv('TARGET_CHANNELS', '').split(',')
+    return [channel.strip() for channel in channels if channel.strip()]
+
 def check_environment():
     """Check if all required environment variables are set."""
-    print("\n🔍 Checking configuration...")
+    print_status("Checking configuration...", "info")
     required_vars = ['API_ID', 'API_HASH', 'AUTOBUY_BOT_USERNAME', 'TARGET_CHANNELS']
     missing_vars = []
     
@@ -93,20 +115,20 @@ def check_environment():
             missing_vars.append(var)
     
     if missing_vars:
-        logger.error("❌ Missing required settings:")
+        print_status("Missing required settings:", "error")
         for var in missing_vars:
-            logger.error(f"   - {var}")
-        logger.error("\nPlease check your .env file and make sure all variables are set correctly.")
+            print_status(f"   - {var}", "error")
+        print_status("Please check your .env file and make sure all variables are set correctly.", "error")
         return False
     
     # Check if at least one channel is specified
     channels = get_target_channels()
     if not channels:
-        logger.error("❌ No target channels specified!")
-        logger.error("Please add at least one channel to TARGET_CHANNELS in your .env file")
+        print_status("No target channels specified!", "error")
+        print_status("Please add at least one channel to TARGET_CHANNELS in your .env file", "error")
         return False
     
-    print("✅ Configuration check passed!")
+    print_status("Configuration check passed!", "success")
     return True
 
 async def handle_new_message(event):
@@ -121,13 +143,13 @@ async def handle_new_message(event):
         if not channel_username:
             return
 
-        logger.info(f"Received message from channel: @{channel_username}")
-        logger.info(f"Message content: {event.message.text}")
+        print_status(f"Received message from channel: @{channel_username}", "info")
+        print_status(f"Message content: {event.message.text}", "info")
 
         # Check if the message is from any of the target channels
         target_channels = [channel.lstrip('@') for channel in get_target_channels()]
         if channel_username not in target_channels:
-            logger.info(f"Channel @{channel_username} not in target channels: {target_channels}")
+            print_status(f"Channel @{channel_username} not in target channels: {target_channels}", "info")
             return
 
         # Extract contract addresses from the message
@@ -135,10 +157,10 @@ async def handle_new_message(event):
         contract_addresses = re.findall(os.getenv('CA_PATTERN', r'0x[a-fA-F0-9]{40}'), message_text)
 
         if not contract_addresses:
-            logger.info("No contract addresses found in message")
+            print_status("No contract addresses found in message", "info")
             return
 
-        logger.info(f"Found contract addresses: {contract_addresses}")
+        print_status(f"Found contract addresses: {contract_addresses}", "success")
 
         # Forward each contract address to the autobuy bot
         for ca in contract_addresses:
@@ -148,25 +170,25 @@ async def handle_new_message(event):
                     os.getenv('AUTOBUY_BOT_USERNAME'),
                     ca
                 )
-                logger.info(f"✅ Forwarded contract address from @{channel_username}: {ca}")
-                print(f"\n🔄 New contract address detected and forwarded!")
-                print(f"📢 Channel: @{channel_username}")
-                print(f"📝 Contract: {ca}")
-                print(f"⏰ Time: {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}")
+                print_status(f"Forwarded contract address from @{channel_username}: {ca}", "success")
+                print(f"\n{Fore.GREEN}🔄 New contract address detected and forwarded!{Style.RESET_ALL}")
+                print(f"{Fore.CYAN}📢 Channel: @{channel_username}{Style.RESET_ALL}")
+                print(f"{Fore.YELLOW}📝 Contract: {ca}{Style.RESET_ALL}")
+                print(f"{Fore.CYAN}⏰ Time: {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}{Style.RESET_ALL}")
             except Exception as e:
-                logger.error(f"❌ Error forwarding contract address from @{channel_username}: {e}")
-                print(f"\n⚠️ Error forwarding contract address!")
-                print(f"📢 Channel: @{channel_username}")
-                print(f"📝 Contract: {ca}")
-                print(f"❌ Error: {str(e)}")
+                print_status(f"Error forwarding contract address from @{channel_username}: {e}", "error")
+                print(f"\n{Fore.RED}⚠️ Error forwarding contract address!{Style.RESET_ALL}")
+                print(f"{Fore.CYAN}📢 Channel: @{channel_username}{Style.RESET_ALL}")
+                print(f"{Fore.YELLOW}📝 Contract: {ca}{Style.RESET_ALL}")
+                print(f"{Fore.RED}❌ Error: {str(e)}{Style.RESET_ALL}")
 
     except Exception as e:
-        logger.error(f"Error processing message: {e}")
+        print_status(f"Error processing message: {e}", "error")
 
 async def main():
     """Main function to run the client."""
     print_banner()
-    print("\n🚀 Starting up...")
+    print_status("Starting up...", "info")
     
     # Check environment variables
     if not check_environment():
@@ -178,7 +200,7 @@ async def main():
     target_channels = get_target_channels()
     autobuy_bot = os.getenv('AUTOBUY_BOT_USERNAME')
     
-    print("\n🔄 Initializing client...")
+    print_status("Initializing client...", "info")
     
     # Create the client
     client = TelegramClient('monitor_session', api_id, api_hash)
@@ -186,27 +208,27 @@ async def main():
     # Add event handler for new messages
     client.add_event_handler(handle_new_message, events.NewMessage(chats=target_channels))
     
-    print("\n✅ Client is now running!")
-    print("📢 Monitoring channels:")
+    print_status("Client is now running!", "success")
+    print(f"\n{Fore.CYAN}📢 Monitoring channels:{Style.RESET_ALL}")
     for channel in target_channels:
-        print(f"   • {channel}")
-    print(f"🤖 Forwarding to: @{autobuy_bot}")
+        print(f"{Fore.GREEN}   • {channel}{Style.RESET_ALL}")
+    print(f"{Fore.YELLOW}🤖 Forwarding to: @{autobuy_bot}{Style.RESET_ALL}")
     
     # Print the menu
     print_menu()
     
-    print("\n⏳ Waiting for contract addresses...\n")
+    print(f"\n{Fore.CYAN}⏳ Waiting for contract addresses...{Style.RESET_ALL}\n")
     
     try:
         # Start the client
         await client.start()
         await client.run_until_disconnected()
     except KeyboardInterrupt:
-        print("\n\n👋 Client stopped by user. Goodbye!")
+        print(f"\n\n{Fore.YELLOW}👋 Client stopped by user. Goodbye!{Style.RESET_ALL}")
     except Exception as e:
-        logger.error(f"❌ Unexpected error: {e}")
-        print("\n❌ Client encountered an error and needs to stop.")
-        print("Please check the error message above and try again.")
+        print_status(f"Unexpected error: {e}", "error")
+        print(f"\n{Fore.RED}❌ Client encountered an error and needs to stop.{Style.RESET_ALL}")
+        print(f"{Fore.RED}Please check the error message above and try again.{Style.RESET_ALL}")
         sys.exit(1)
 
 if __name__ == '__main__':
