@@ -3,6 +3,7 @@ import subprocess
 import os
 import asyncio
 from plyer import notification
+from license_manager import require_license
 
 def ensure_requirements():
     try:
@@ -17,6 +18,7 @@ def ensure_requirements():
         os.execv(sys.executable, [sys.executable] + sys.argv)
 
 ensure_requirements()
+require_license()
 
 import re
 import time
