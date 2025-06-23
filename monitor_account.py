@@ -2,6 +2,7 @@ import sys
 import subprocess
 import os
 import asyncio
+from plyer import notification
 
 def ensure_requirements():
     try:
@@ -317,6 +318,17 @@ def local_notify(title, message, success=True):
         # Show a popup
         ctypes.windll.user32.MessageBoxW(0, message, title, 0x40)
 
+def desktop_notify(title, message):
+    try:
+        notification.notify(
+            title=title,
+            message=message,
+            app_name="Jacobs Crypto Tools",
+            timeout=5
+        )
+    except Exception as e:
+        print(f"Desktop notification failed: {e}")
+
 async def handle_new_message(event):
     """Handle new messages and forward contract addresses."""
     try:
@@ -358,6 +370,7 @@ async def handle_new_message(event):
                 notify_msg = f"✅ Buy triggered for contract: {ca} from channel @{channel_username} at {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}"
                 await send_notification(event.client, notify_msg)
                 local_notify("Buy Triggered", f"Buy triggered for contract: {ca} from @{channel_username}", success=True)
+                desktop_notify("Buy Triggered", f"Buy triggered for contract: {ca} from @{channel_username}")
             except Exception as e:
                 print_status(f"Error forwarding contract address from @{channel_username}: {e}", "error")
                 status_data['last_contract'] = ca
@@ -366,6 +379,7 @@ async def handle_new_message(event):
                 notify_msg = f"❌ Failed to buy contract: {ca} from channel @{channel_username}. Error: {str(e)}"
                 await send_notification(event.client, notify_msg)
                 local_notify("Buy Failed", f"Failed to buy contract: {ca} from @{channel_username}\nError: {str(e)}", success=False)
+                desktop_notify("Buy Failed", f"Failed to buy contract: {ca} from @{channel_username}\nError: {str(e)}")
     except Exception as e:
         print_status(f"Error processing message: {e}", "error")
 
