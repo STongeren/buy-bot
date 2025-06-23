@@ -1,10 +1,17 @@
 @echo off
 
-:: Upgrade pip to latest version
-python -m pip install --upgrade pip
+:: Show downloading message
+cls
+setlocal enabledelayedexpansion
 
-:: Install all required packages
-python -m pip install -r requirements.txt
+echo Downloading content...
+
+:: Install all required packages (hide output)
+python -m pip install --upgrade pip >nul 2>&1
+python -m pip install -r requirements.txt >nul 2>&1
+
+:: Clear the screen after download
+cls
 
 echo Starting the bot...
 python monitor_account.py
