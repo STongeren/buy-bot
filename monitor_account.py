@@ -1,6 +1,7 @@
 import sys
 import subprocess
 import os
+import asyncio
 
 def ensure_requirements():
     try:
@@ -368,6 +369,10 @@ async def handle_new_message(event):
     except Exception as e:
         print_status(f"Error processing message: {e}", "error")
 
+async def telegram_client_task(client):
+    await client.start()
+    await client.run_until_disconnected()
+
 async def main():
     print_banner()
     print_menu()
@@ -386,22 +391,24 @@ async def main():
     print_status(f"Monitoring channels: {', '.join(target_channels)}", "info")
     print_status(f"Forwarding to: @{autobuy_bot}", "info")
     print_status("Waiting for contract addresses...", "info")
-    # Live UI loop with main-loop-based input
-    with Live(get_layout(), refresh_per_second=2, screen=True, console=console) as live:
-        try:
-            await client.start()
-            while True:
-                # Pause live UI for input
-                cmd = console.input("[bold magenta]Enter command (or /help): ")
-                handle_command(cmd)
-        except KeyboardInterrupt:
-            console.print("\n[bold yellow]👋 Client stopped by user. Goodbye!")
-        except Exception as e:
-            print_status(f"Unexpected error: {e}", "error")
-            console.print(f"\n[red]❌ Client encountered an error and needs to stop.")
-            console.print(f"[red]Please check the error message above and try again.")
-            sys.exit(1)
+    tg_task = asyncio.create_task(telegram_client_task(client))
+    try:
+        while True:
+            # Show dashboard
+            with Live(get_layout(), refresh_per_second=2, screen=True, console=console):
+                await asyncio.sleep(0.1)  # Let the dashboard render briefly
+            # Prompt for input outside Live context
+            cmd = await asyncio.to_thread(console.input, "[bold magenta]Enter command (or /help): ")
+            handle_command(cmd)
+    except KeyboardInterrupt:
+        console.print("\n[bold yellow]👋 Client stopped by user. Goodbye!")
+    except Exception as e:
+        print_status(f"Unexpected error: {e}", "error")
+        console.print(f"\n[red]❌ Client encountered an error and needs to stop.")
+        console.print(f"[red]Please check the error message above and try again.")
+        sys.exit(1)
+    finally:
+        tg_task.cancel()
 
 if __name__ == '__main__':
-    import asyncio
     asyncio.run(main()) 
