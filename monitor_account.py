@@ -51,6 +51,13 @@ colorama.init()
 # Load environment variables
 load_dotenv()
 
+# Rate limiting and validation settings
+MAX_MESSAGE_AGE_SECONDS = 30  # Only process messages from last 30 seconds
+RATE_LIMIT_WINDOW = 60  # Rate limit window in seconds
+MAX_MESSAGES_PER_WINDOW = 5  # Max messages per channel per window
+channel_message_counts = {}  # Track message counts per channel
+last_message_times = {}  # Track last message time per channel
+
 # Configure logging with colors
 class ColoredFormatter(logging.Formatter):
     """Custom formatter with colors"""
@@ -331,33 +338,133 @@ def desktop_notify(title, message):
     except Exception as e:
         print(f"Desktop notification failed: {e}")
 
-async def handle_new_message(event):
-    """Handle new messages and forward contract addresses."""
+def validate_contract_address(ca):
+    """Validate contract address format and basic checks."""
+    if not ca or len(ca) != 42:
+        return False
+    if not ca.startswith('0x'):
+        return False
+    if not re.match(r'^0x[a-fA-F0-9]{40}$', ca):
+        return False
+    return True
+
+def is_message_fresh(message_date):
+    """Check if message is within the acceptable time window."""
+    if not message_date:
+        return False
+    age = datetime.now() - message_date.replace(tzinfo=None)
+    return age.total_seconds() <= MAX_MESSAGE_AGE_SECONDS
+
+def check_rate_limit(channel_username):
+    """Check if channel is within rate limits."""
+    now = datetime.now()
+    if channel_username not in last_message_times:
+        last_message_times[channel_username] = now
+        channel_message_counts[channel_username] = 1
+        return True
+    
+    time_diff = (now - last_message_times[channel_username]).total_seconds()
+    
+    if time_diff > RATE_LIMIT_WINDOW:
+        # Reset counter for new window
+        last_message_times[channel_username] = now
+        channel_message_counts[channel_username] = 1
+        return True
+    
+    if channel_message_counts[channel_username] >= MAX_MESSAGES_PER_WINDOW:
+        return False
+    
+    channel_message_counts[channel_username] += 1
+    last_message_times[channel_username] = now
+    return True
+
+async def send_backup_notification(client, ca, channel_username, error_msg=""):
+    """Send backup notification if autobuy bot fails."""
     try:
+        backup_msg = f"🚨 BACKUP ALERT 🚨\n"
+        backup_msg += f"Contract: {ca}\n"
+        backup_msg += f"Channel: @{channel_username}\n"
+        backup_msg += f"Time: {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}\n"
+        if error_msg:
+            backup_msg += f"Error: {error_msg}\n"
+        backup_msg += f"⚠️ Manual intervention may be required!"
+        
+        # Send to yourself if you have a personal chat ID set
+        personal_chat_id = os.getenv('PERSONAL_CHAT_ID')
+        if personal_chat_id:
+            await client.send_message(int(personal_chat_id), backup_msg)
+        
+        # Also send to notification chat if different
+        if NOTIFY_CHAT_ID and NOTIFY_CHAT_ID != personal_chat_id:
+            await client.send_message(int(NOTIFY_CHAT_ID), backup_msg)
+            
+    except Exception as e:
+        print_status(f"Failed to send backup notification: {e}", "error")
+
+async def handle_new_message(event):
+    """Handle new messages and forward contract addresses with comprehensive validation."""
+    try:
+        # Get the channel username
         chat = await event.get_chat()
         if not hasattr(chat, 'username'):
             return
         channel_username = chat.username
         if not channel_username:
             return
+
         print_status(f"Received message from channel: @{channel_username}", "info")
         print_status(f"Message content: {event.message.text}", "info")
+
+        # Check if the message is from any of the target channels
         target_channels = [channel.lstrip('@') for channel in get_target_channels()]
         if channel_username not in target_channels:
             print_status(f"Channel @{channel_username} not in target channels: {target_channels}", "info")
             return
+
+        # --- Message freshness validation ---
+        if not is_message_fresh(event.message.date):
+            print_status(f"Message too old ({event.message.date}). Skipping to prevent late signals.", "warning")
+            return
+
+        # --- Rate limiting check ---
+        if not check_rate_limit(channel_username):
+            print_status(f"Rate limit exceeded for @{channel_username}. Skipping to prevent spam.", "warning")
+            return
+
+        # --- Owner ID filtering ---
+        channel_owners = parse_channel_owners()
+        owner_id = channel_owners.get(channel_username)
+        if owner_id is not None:
+            sender = await event.get_sender()
+            if sender.id != owner_id:
+                print_status(f"Message ignored: sender {sender.id} is not the owner ({owner_id}) of @{channel_username}", "info")
+                return
+
+        # Extract contract addresses from the message
         message_text = event.message.text
         contract_addresses = re.findall(os.getenv('CA_PATTERN', r'0x[a-fA-F0-9]{40}'), message_text)
+
         if not contract_addresses:
             print_status("No contract addresses found in message", "info")
             return
+
         print_status(f"Found contract addresses: {contract_addresses}", "success")
+
+        # Process each contract address with validation
         for ca in contract_addresses:
+            # --- Contract address validation ---
+            if not validate_contract_address(ca):
+                print_status(f"Invalid contract address format: {ca}. Skipping.", "warning")
+                continue
+
+            # Check for duplicates
             if ca in processed_contracts:
                 print_status(f"Contract address {ca} already processed. Skipping.", "warning")
                 status_data['last_status'] = 'Skipped (duplicate)'
                 continue
+
             try:
+                # Send the contract address to the autobuy bot
                 await event.client.send_message(
                     os.getenv('AUTOBUY_BOT_USERNAME'),
                     ca
@@ -369,25 +476,48 @@ async def handle_new_message(event):
                 status_data['last_contract'] = ca
                 status_data['last_channel'] = channel_username
                 status_data['last_status'] = 'Success'
+                
+                # Success notifications
                 notify_msg = f"✅ Buy triggered for contract: {ca} from channel @{channel_username} at {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}"
                 await send_notification(event.client, notify_msg)
                 local_notify("Buy Triggered", f"Buy triggered for contract: {ca} from @{channel_username}", success=True)
                 desktop_notify("Buy Triggered", f"Buy triggered for contract: {ca} from @{channel_username}")
+
             except Exception as e:
-                print_status(f"Error forwarding contract address from @{channel_username}: {e}", "error")
+                error_msg = str(e)
+                print_status(f"Error forwarding contract address from @{channel_username}: {error_msg}", "error")
                 status_data['last_contract'] = ca
                 status_data['last_channel'] = channel_username
                 status_data['last_status'] = 'Failed'
-                notify_msg = f"❌ Failed to buy contract: {ca} from channel @{channel_username}. Error: {str(e)}"
+                
+                # Backup notification for failed autobuy
+                await send_backup_notification(event.client, ca, channel_username, error_msg)
+                
+                # Error notifications
+                notify_msg = f"❌ Failed to buy contract: {ca} from channel @{channel_username}. Error: {error_msg}"
                 await send_notification(event.client, notify_msg)
-                local_notify("Buy Failed", f"Failed to buy contract: {ca} from @{channel_username}\nError: {str(e)}", success=False)
-                desktop_notify("Buy Failed", f"Failed to buy contract: {ca} from @{channel_username}\nError: {str(e)}")
+                local_notify("Buy Failed", f"Failed to buy contract: {ca} from @{channel_username}\nError: {error_msg}", success=False)
+                desktop_notify("Buy Failed", f"Failed to buy contract: {ca} from @{channel_username}\nError: {error_msg}")
+
     except Exception as e:
         print_status(f"Error processing message: {e}", "error")
 
 async def telegram_client_task(client):
-    await client.start()
-    await client.run_until_disconnected()
+    """Run the Telegram client and exit on connection errors."""
+    try:
+        await client.start()
+        await client.run_until_disconnected()
+    except Exception as e:
+        error_msg = str(e).lower()
+        if any(keyword in error_msg for keyword in ['connection', 'server closed', 'session id', 'old message']):
+            print_status("Connection error detected. Exiting to prevent late signals.", "error")
+            console.print(f"\n[bold red]❌ Connection error: {e}")
+            console.print("[bold red]Exiting to prevent late signals that could cause losses!")
+            local_notify("Bot Disconnected", "Telegram connection lost. Bot stopped to prevent late signals.", success=False)
+            desktop_notify("Bot Disconnected", "Telegram connection lost. Bot stopped to prevent late signals.")
+            sys.exit(1)
+        else:
+            raise e
 
 async def main():
     print_banner()
