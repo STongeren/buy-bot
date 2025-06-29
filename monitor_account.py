@@ -332,11 +332,14 @@ def desktop_notify(title, message):
 async def handle_new_message(event):
     """Handle new messages and forward contract addresses."""
     try:
+        print_status("🔔 Message handler triggered!", "info")
         chat = await event.get_chat()
         if not hasattr(chat, 'username'):
+            print_status("❌ Chat has no username", "error")
             return
         channel_username = chat.username
         if not channel_username:
+            print_status("❌ Channel username is empty", "error")
             return
         print_status(f"Received message from channel: @{channel_username}", "info")
         print_status(f"Message content: {event.message.text}", "info")
@@ -399,13 +402,49 @@ async def main():
     autobuy_bot = os.getenv('AUTOBUY_BOT_USERNAME')
     status_data['channels'] = target_channels
     load_processed_contracts()
+    
     client = TelegramClient('monitor_session', api_id, api_hash)
-    client.add_event_handler(handle_new_message, events.NewMessage(chats=target_channels))
+    
+    # Start the client first
+    await client.start()
+    print_status("✅ Connected to Telegram", "success")
+    
+    # Resolve channel entities for proper event handling
+    print_status("Resolving channel entities...", "info")
+    resolved_channels = []
+    for channel in target_channels:
+        try:
+            entity = await client.get_entity(channel)
+            resolved_channels.append(entity)
+            print_status(f"✅ Resolved channel: {channel} -> {entity.title}", "success")
+        except Exception as e:
+            print_status(f"❌ Failed to resolve channel {channel}: {e}", "error")
+    
+    if not resolved_channels:
+        print_status("❌ No channels could be resolved. Exiting.", "error")
+        await client.disconnect()
+        sys.exit(1)
+    
+    # Add event handler with resolved channel entities
+    client.add_event_handler(handle_new_message, events.NewMessage(chats=resolved_channels))
+    
     print_status("Client is now running!", "success")
     print_status(f"Monitoring channels: {', '.join(target_channels)}", "info")
     print_status(f"Forwarding to: @{autobuy_bot}", "info")
     print_status("Waiting for contract addresses...", "info")
-    tg_task = asyncio.create_task(telegram_client_task(client))
+    
+    # Test message to verify event handler is working
+    print_status("Testing event handler...", "info")
+    for entity in resolved_channels:
+        try:
+            messages = await client.get_messages(entity, limit=1)
+            if messages:
+                print_status(f"✅ Can read from {entity.title}", "success")
+            else:
+                print_status(f"⚠️ No recent messages in {entity.title}", "warning")
+        except Exception as e:
+            print_status(f"❌ Cannot read from {entity.title}: {e}", "error")
+    
     try:
         while True:
             # Show dashboard
@@ -422,7 +461,7 @@ async def main():
         console.print(f"[red]Please check the error message above and try again.")
         sys.exit(1)
     finally:
-        tg_task.cancel()
+        await client.disconnect()
 
 if __name__ == '__main__':
     asyncio.run(main()) 
