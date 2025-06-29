@@ -1,0 +1,15 @@
+[Unit]
+Description=Telegram Contract Monitor Bot
+After=network.target
+
+[Service]
+Type=simple
+User=root
+WorkingDirectory=/opt/buy-bot
+ExecStart=/opt/buy-bot/venv/bin/python monitor_vps.py
+Restart=always
+RestartSec=10
+Environment=PATH=/opt/buy-bot/venv/bin:/usr/bin:/usr/local/bin
+
+[Install]
+WantedBy=multi-user.target 
