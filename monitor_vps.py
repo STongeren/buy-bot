@@ -85,6 +85,11 @@ async def handle_new_message(event):
         if channel_username not in target_channels:
             return
         
+        # Block forwarded messages with contract addresses
+        if getattr(event.message, 'forward', None) or getattr(event.message, 'fwd_from', None):
+            logger.info("⛔ Forwarded message with CA detected, not forwarding.")
+            return
+
         logger.info(f"📨 Message from @{channel_username}: {event.message.text[:100]}...")
         
         message_text = event.message.text

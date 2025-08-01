@@ -347,6 +347,10 @@ async def handle_new_message(event):
         if channel_username not in target_channels:
             print_status(f"Channel @{channel_username} not in target channels: {target_channels}", "info")
             return
+        # Block forwarded messages with contract addresses
+        if getattr(event.message, 'forward', None) or getattr(event.message, 'fwd_from', None):
+            print_status("⛔ Forwarded message with CA detected, not forwarding.", "warning")
+            return
         message_text = event.message.text
         contract_addresses = re.findall(os.getenv('CA_PATTERN', r'0x[a-fA-F0-9]{40}'), message_text)
         if not contract_addresses:
