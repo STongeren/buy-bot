@@ -44,6 +44,9 @@ async def test_channels():
                 # Try to get channel entity
                 if channel.startswith('@'):
                     entity = await client.get_entity(channel)
+                elif channel.startswith('-100'):
+                    # Handle numeric group IDs
+                    entity = await client.get_entity(int(channel))
                 else:
                     entity = await client.get_entity(f"@{channel}")
                 

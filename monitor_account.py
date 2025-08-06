@@ -247,7 +247,21 @@ def handle_command(cmd):
 def get_target_channels():
     """Get list of target channels from environment variable."""
     channels = os.getenv('TARGET_CHANNELS', '').split(',')
-    return [channel.strip() for channel in channels if channel.strip()]
+    processed_channels = []
+    
+    for channel in channels:
+        channel = channel.strip()
+        if not channel:
+            continue
+            
+        # Handle private groups with + format
+        if channel.startswith('+'):
+            # Convert + format to invite link format
+            channel = f"https://t.me/{channel}"
+            
+        processed_channels.append(channel)
+    
+    return processed_channels
 
 def check_environment():
     """Check if all required environment variables are set."""
