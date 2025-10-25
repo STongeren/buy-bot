@@ -18,7 +18,7 @@ def ensure_requirements():
         os.execv(sys.executable, [sys.executable] + sys.argv)
 
 ensure_requirements()
-require_license()
+# require_license()  # Disabled for VPS deployment
 
 import re
 import time
@@ -404,50 +404,69 @@ async def send_backup_notification(client, ca, channel_username, error_msg=""):
 async def handle_new_message(event):
     """Handle new messages and forward contract addresses with comprehensive validation."""
     try:
+        logger.info(f"🔔 NEW MESSAGE EVENT TRIGGERED!")
+        
         # Get the channel username
         chat = await event.get_chat()
+        logger.info(f"Chat type: {type(chat).__name__}, Chat: {chat}")
+        
         if not hasattr(chat, 'username'):
+            logger.warning(f"Chat has no username attribute")
             return
         channel_username = chat.username
         if not channel_username:
+            logger.warning(f"Channel username is None or empty")
             return
 
+        logger.info(f"📨 Received message from channel: @{channel_username}")
+        logger.info(f"📝 Message content: {event.message.text}")
         print_status(f"Received message from channel: @{channel_username}", "info")
         print_status(f"Message content: {event.message.text}", "info")
 
         # Check if the message is from any of the target channels
         target_channels = [channel.lstrip('@') for channel in get_target_channels()]
+        logger.info(f"Target channels (stripped): {target_channels}")
+        logger.info(f"Current channel username: {channel_username}")
+        
         if channel_username not in target_channels:
+            logger.warning(f"❌ Channel @{channel_username} not in target channels: {target_channels}")
             print_status(f"Channel @{channel_username} not in target channels: {target_channels}", "info")
             return
+        
+        logger.info(f"✅ Channel check passed!")
 
         # --- Message freshness validation ---
+        logger.info(f"Checking message freshness. Message date: {event.message.date}")
         if not is_message_fresh(event.message.date):
+            logger.warning(f"❌ Message too old ({event.message.date}). Skipping.")
             print_status(f"Message too old ({event.message.date}). Skipping to prevent late signals.", "warning")
             return
+        
+        logger.info(f"✅ Message freshness check passed!")
 
         # --- Rate limiting check ---
         if not check_rate_limit(channel_username):
+            logger.warning(f"❌ Rate limit exceeded for @{channel_username}")
             print_status(f"Rate limit exceeded for @{channel_username}. Skipping to prevent spam.", "warning")
             return
-
-        # --- Owner ID filtering ---
-        channel_owners = parse_channel_owners()
-        owner_id = channel_owners.get(channel_username)
-        if owner_id is not None:
-            sender = await event.get_sender()
-            if sender.id != owner_id:
-                print_status(f"Message ignored: sender {sender.id} is not the owner ({owner_id}) of @{channel_username}", "info")
-                return
+        
+        logger.info(f"✅ Rate limit check passed!")
 
         # Extract contract addresses from the message
         message_text = event.message.text
-        contract_addresses = re.findall(os.getenv('CA_PATTERN', r'0x[a-fA-F0-9]{40}'), message_text)
+        ca_pattern = os.getenv('CA_PATTERN', r'0x[a-fA-F0-9]{40}')
+        logger.info(f"Using CA_PATTERN: {ca_pattern}")
+        logger.info(f"Searching in message: {message_text}")
+        
+        contract_addresses = re.findall(ca_pattern, message_text)
+        logger.info(f"Regex result: {contract_addresses}")
 
         if not contract_addresses:
+            logger.warning(f"❌ No contract addresses found in message")
             print_status("No contract addresses found in message", "info")
             return
 
+        logger.info(f"✅ Found {len(contract_addresses)} contract address(es): {contract_addresses}")
         print_status(f"Found contract addresses: {contract_addresses}", "success")
 
         # Process each contract address with validation
@@ -505,7 +524,10 @@ async def handle_new_message(event):
 async def telegram_client_task(client):
     """Run the Telegram client and exit on connection errors."""
     try:
+        logger.info("🔄 Connecting to Telegram...")
         await client.start()
+        logger.info("✅ Successfully connected to Telegram!")
+        logger.info("👂 Listening for messages from monitored channels...")
         await client.run_until_disconnected()
     except Exception as e:
         error_msg = str(e).lower()
@@ -520,32 +542,58 @@ async def telegram_client_task(client):
             raise e
 
 async def main():
-    print_banner()
-    print_menu()
+    # Check if running as a systemd service early
+    is_service = os.getenv('INVOCATION_ID') is not None or not sys.stdin.isatty()
+    
+    if not is_service:
+        print_banner()
+        print_menu()
+    
+    logger.info("Starting Telegram Contract Monitor...")
     print_status("Starting up...", "info")
+    
     if not check_environment():
         sys.exit(1)
+    
     api_id = os.getenv('API_ID')
     api_hash = os.getenv('API_HASH')
     target_channels = get_target_channels()
     autobuy_bot = os.getenv('AUTOBUY_BOT_USERNAME')
     status_data['channels'] = target_channels
+    
+    logger.info(f"Loading processed contracts from {PROCESSED_CONTRACTS_FILE}")
     load_processed_contracts()
+    
+    logger.info(f"Initializing Telegram client...")
     client = TelegramClient('monitor_session', api_id, api_hash)
     client.add_event_handler(handle_new_message, events.NewMessage(chats=target_channels))
+    
+    logger.info("✅ Client configured successfully!")
+    logger.info(f"📺 Monitoring {len(target_channels)} channels: {', '.join(target_channels)}")
+    logger.info(f"🎯 Forwarding to: @{autobuy_bot}")
+    
     print_status("Client is now running!", "success")
     print_status(f"Monitoring channels: {', '.join(target_channels)}", "info")
     print_status(f"Forwarding to: @{autobuy_bot}", "info")
     print_status("Waiting for contract addresses...", "info")
+    
     tg_task = asyncio.create_task(telegram_client_task(client))
+    
     try:
-        while True:
-            # Show dashboard
-            with Live(get_layout(), refresh_per_second=2, screen=True, console=console):
-                await asyncio.sleep(0.1)  # Let the dashboard render briefly
-            # Prompt for input outside Live context
-            cmd = await asyncio.to_thread(console.input, "[bold magenta]Enter command (or /help): ")
-            handle_command(cmd)
+        if is_service:
+            # Headless mode - just wait for the telegram task
+            logger.info("🚀 Running in headless mode (service) - monitoring started!")
+            print_status("Running in headless mode (service)", "success")
+            await tg_task
+        else:
+            # Interactive mode with UI
+            while True:
+                # Show dashboard
+                with Live(get_layout(), refresh_per_second=2, screen=True, console=console):
+                    await asyncio.sleep(0.1)  # Let the dashboard render briefly
+                # Prompt for input outside Live context
+                cmd = await asyncio.to_thread(console.input, "[bold magenta]Enter command (or /help): ")
+                handle_command(cmd)
     except KeyboardInterrupt:
         console.print("\n[bold yellow]👋 Client stopped by user. Goodbye!")
     except Exception as e:
